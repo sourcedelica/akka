@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 import com.typesafe.config.{ Config, ConfigFactory }
 import akka.event._
 import akka.dispatch._
+import akka.dispatch.sysmsg.SystemMessage
 import akka.japi.Util.immutableSeq
 import akka.actor.dungeon.ChildrenContainer
 import akka.util._

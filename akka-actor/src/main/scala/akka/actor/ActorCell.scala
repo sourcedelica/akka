@@ -11,7 +11,8 @@ import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 import akka.actor.dungeon.ChildrenContainer
 import akka.actor.dungeon.ChildrenContainer.WaitingForChildren
-import akka.dispatch.{ Watch, Unwatch, Terminate, SystemMessage, Suspend, Supervise, Resume, Recreate, NoMessage, MessageDispatcher, Envelope, Create, ChildTerminated }
+import akka.dispatch.{ MessageDispatcher, Envelope }
+import akka.dispatch.sysmsg._
 import akka.event.Logging.{ LogEvent, Debug, Error }
 import akka.japi.Procedure
 import akka.dispatch.NullMessage

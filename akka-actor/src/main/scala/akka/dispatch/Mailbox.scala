@@ -6,6 +6,7 @@ package akka.dispatch
 import java.util.{ Comparator, PriorityQueue, Queue, Deque }
 import java.util.concurrent._
 import akka.AkkaException
+import akka.dispatch.sysmsg.{ SystemMessage, NoMessage }
 import akka.actor.{ ActorCell, ActorRef, Cell, ActorSystem, InternalActorRef, DeadLetter }
 import akka.util.{ Unsafe, BoundedBlockingQueue }
 import akka.event.Logging.Error

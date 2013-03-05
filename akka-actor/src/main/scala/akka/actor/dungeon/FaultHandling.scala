@@ -7,11 +7,12 @@ package akka.actor.dungeon
 import scala.annotation.tailrec
 import akka.actor.{ PreRestartException, PostRestartException, InternalActorRef, Failed, ActorRef, ActorInterruptedException, ActorCell, Actor }
 import akka.dispatch._
+import akka.dispatch.sysmsg.SystemMessage
 import akka.event.Logging.{ Warning, Error, Debug }
 import scala.util.control.NonFatal
 import akka.event.Logging
 import scala.collection.immutable
-import akka.dispatch.ChildTerminated
+import akka.dispatch.sysmsg.ChildTerminated
 import akka.actor.PreRestartException
 import akka.actor.Failed
 import akka.actor.PostRestartException

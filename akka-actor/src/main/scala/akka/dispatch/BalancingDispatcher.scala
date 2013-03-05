@@ -5,6 +5,7 @@
 package akka.dispatch
 
 import akka.actor.{ ActorCell, ActorRef }
+import akka.dispatch.sysmsg._
 import scala.annotation.tailrec
 import scala.concurrent.duration.Duration
 import akka.util.Helpers

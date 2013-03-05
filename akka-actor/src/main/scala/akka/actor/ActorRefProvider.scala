@@ -4,7 +4,8 @@
 
 package akka.actor
 
-import akka.dispatch._
+import akka.dispatch.sysmsg._
+import akka.dispatch.NullMessage
 import akka.routing._
 import akka.event._
 import akka.util.{ Switch, Helpers }

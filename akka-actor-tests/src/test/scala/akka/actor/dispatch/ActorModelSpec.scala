@@ -16,6 +16,7 @@ import org.scalatest.junit.JUnitRunner
 import com.typesafe.config.Config
 
 import akka.actor._
+import akka.dispatch.sysmsg._
 import akka.dispatch._
 import akka.event.Logging.Error
 import akka.pattern.ask
