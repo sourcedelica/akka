@@ -62,11 +62,7 @@ private[akka] object ChildrenContainer {
     override final def valuesIterator = stats.valuesIterator
   }
 
-  trait WaitingForChildren {
-    private var todo: LatestFirstSystemMessageList = SystemMessageList.LNil
-    def enqueue(message: SystemMessage) = todo ::= message
-    def dequeueAll(): EarliestFirstSystemMessageList = { val ret = todo.reverse; todo = SystemMessageList.LNil; ret }
-  }
+  trait WaitingForChildren
 
   trait EmptyChildrenContainer extends ChildrenContainer {
     val emptyStats = immutable.TreeMap.empty[String, ChildStats]

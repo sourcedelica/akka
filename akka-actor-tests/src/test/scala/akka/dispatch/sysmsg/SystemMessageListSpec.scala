@@ -84,4 +84,33 @@ class SystemMessageListSpec extends AkkaSpec {
 
   }
 
+  "EarliestFirstSystemMessageList" must {
+
+    "properly prepend reversed message lists to the front" in {
+      val create0 = Create(0)
+      val create1 = Create(1)
+      val create2 = Create(2)
+      val create3 = Create(3)
+      val create4 = Create(4)
+      val create5 = Create(5)
+
+      val fwdList = create3 :: create4 :: create5 :: ENil
+      val revList = create2 :: create1 :: create0 :: LNil
+
+      val list = fwdList reversePrepend revList
+
+      (list.head eq create0) must be(true)
+      (list.tail.head eq create1) must be(true)
+      (list.tail.tail.head eq create2) must be(true)
+      (list.tail.tail.tail.head eq create3) must be(true)
+      (list.tail.tail.tail.tail.head eq create4) must be(true)
+      (list.tail.tail.tail.tail.tail.head eq create5) must be(true)
+      (list.tail.tail.tail.tail.tail.tail.head eq null) must be(true)
+
+      (ENil reversePrepend LNil) == ENil must be(true)
+      ((ENil reversePrepend create0 :: LNil).head eq create0) must be(true)
+      ((create0 :: ENil reversePrepend LNil).head eq create0) must be(true)
+    }
+
+  }
 }

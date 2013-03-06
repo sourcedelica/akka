@@ -364,6 +364,18 @@ private[akka] class ActorCell(
   protected def actor_=(a: Actor): Unit = _actor = a
   var currentMessage: Envelope = _
   private var behaviorStack: List[Actor.Receive] = emptyBehaviorStack
+  private[this] var sysmsgStash: LatestFirstSystemMessageList = SystemMessageList.LNil
+
+  protected def stash(msg: SystemMessage): Unit = {
+    assert(msg.unlinked)
+    sysmsgStash ::= msg
+  }
+
+  protected def unstashAll(): LatestFirstSystemMessageList = {
+    val ret = sysmsgStash
+    sysmsgStash = SystemMessageList.LNil
+    ret
+  }
 
   /*
    * MESSAGE PROCESSING
@@ -381,6 +393,7 @@ private[akka] class ActorCell(
      */
     var todo: EarliestFirstSystemMessageList = messages.tail
     val message = messages.head
+    message.unlink()
     try {
       message match {
         case Create(uid)               ⇒ create(uid)
@@ -389,21 +402,21 @@ private[akka] class ActorCell(
         case Recreate(cause) ⇒
           waitingForChildrenOrNull match {
             case null                  ⇒ faultRecreate(cause)
-            case w: WaitingForChildren ⇒ w.enqueue(message)
+            case w: WaitingForChildren ⇒ stash(message)
           }
         case Suspend() ⇒
           waitingForChildrenOrNull match {
             case null                  ⇒ faultSuspend()
-            case w: WaitingForChildren ⇒ w.enqueue(message)
+            case w: WaitingForChildren ⇒ stash(message)
           }
         case Resume(inRespToFailure) ⇒
           waitingForChildrenOrNull match {
             case null                  ⇒ faultResume(inRespToFailure)
-            case w: WaitingForChildren ⇒ w.enqueue(message)
+            case w: WaitingForChildren ⇒ stash(message)
           }
         case Terminate()                  ⇒ terminate()
         case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
-        case ChildTerminated(child)       ⇒ todo = handleChildTerminated(child)
+        case ChildTerminated(child)       ⇒ todo = todo reversePrepend handleChildTerminated(child)
         case NoMessage                    ⇒ // only here to suppress warning
       }
     } catch handleNonFatalOrInterruptedException { e ⇒

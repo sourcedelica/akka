@@ -53,6 +53,17 @@ class EarliestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
     new EarliestFirstSystemMessageList(msg)
   }
 
+  final def reversePrepend(other: LatestFirstSystemMessageList): EarliestFirstSystemMessageList = {
+    var remaining = other
+    var result = this
+    while (!remaining.isEmpty) {
+      val msg = remaining.head
+      remaining = remaining.tail
+      result ::= msg
+    }
+    result
+  }
+
 }
 
 /**

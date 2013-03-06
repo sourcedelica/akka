@@ -259,7 +259,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
         publish(Debug(self.path.toString, clazz(actor), "dropping Failed(" + cause + ") from unknown child " + child))
     }
 
-  final protected def handleChildTerminated(child: ActorRef): EarliestFirstSystemMessageList = {
+  final protected def handleChildTerminated(child: ActorRef): LatestFirstSystemMessageList = {
     val status = removeChildAndGetStateChange(child)
     /*
      * if this fails, we do nothing in case of terminating/restarting state,
@@ -278,10 +278,10 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
      * then we are continuing the previously suspended recreate/create/terminate action
      */
     status match {
-      case Some(c @ ChildrenContainer.Recreation(cause)) ⇒ finishRecreate(cause, actor); c.dequeueAll()
-      case Some(c @ ChildrenContainer.Creation()) ⇒ finishCreate(); c.dequeueAll()
-      case Some(ChildrenContainer.Termination) ⇒ finishTerminate(); SystemMessageList.ENil
-      case _ ⇒ SystemMessageList.ENil
+      case Some(c @ ChildrenContainer.Recreation(cause)) ⇒ finishRecreate(cause, actor); unstashAll()
+      case Some(c @ ChildrenContainer.Creation()) ⇒ finishCreate(); unstashAll()
+      case Some(ChildrenContainer.Termination) ⇒ finishTerminate(); SystemMessageList.LNil
+      case _ ⇒ SystemMessageList.LNil
     }
   }
 
