@@ -6,23 +6,41 @@ package akka.dispatch.sysmsg
 import scala.annotation.tailrec
 import akka.actor.{ ActorRef, PossiblyHarmful }
 
-/**
- * INTERNAL API
- */
-private[akka] object SystemMessage {
-  @tailrec
-  final def size(list: SystemMessage, acc: Int = 0): Int = {
-    if (list eq null) acc else size(list.next, acc + 1)
+object SystemMessageList {
+  final val Nil: SystemMessageList = new SystemMessageList(null)
+}
+
+class SystemMessageList(val head: SystemMessage) extends AnyVal {
+
+  final def isEmpty: Boolean = head eq null
+
+  final def size: Int = {
+    @tailrec
+    def sizeInner(head: SystemMessage, acc: Int): Int = if (head eq null) acc else sizeInner(head.next, acc + 1)
+    sizeInner(head, 0)
   }
 
-  @tailrec
-  final def reverse(list: SystemMessage, acc: SystemMessage = null): SystemMessage = {
-    if (list eq null) acc else {
-      val next = list.next
-      list.next = acc
-      reverse(next, list)
+  final def tail: SystemMessageList = new SystemMessageList(head.next)
+
+  final def reverse: SystemMessageList = {
+    @tailrec
+    def reverseInner(head: SystemMessage, acc: SystemMessage): SystemMessage = {
+      if (head eq null) acc else {
+        val next = head.next
+        head.next = acc
+        reverseInner(next, head)
+      }
     }
+
+    new SystemMessageList(reverseInner(head, null))
   }
+
+  final def ::(msg: SystemMessage): SystemMessageList = {
+    assert(msg ne null)
+    msg.next = head
+    new SystemMessageList(msg)
+  }
+
 }
 
 /**
@@ -40,8 +58,13 @@ private[akka] object SystemMessage {
  * ➡➡➡ NEVER SEND THE SAME SYSTEM MESSAGE OBJECT TO TWO ACTORS ⬅⬅⬅
  */
 private[akka] sealed trait SystemMessage extends PossiblyHarmful with Serializable {
+  // Next fields are only modifiable via the SystemMessageList value class
   @transient
-  var next: SystemMessage = _
+  private[sysmsg] var next: SystemMessage = _
+
+  def unlink(): Unit = next = null
+
+  def unlinked: Boolean = next eq null
 }
 
 /**

@@ -7,12 +7,11 @@ package akka.actor.dungeon
 import scala.annotation.tailrec
 import akka.actor.{ PreRestartException, PostRestartException, InternalActorRef, Failed, ActorRef, ActorInterruptedException, ActorCell, Actor }
 import akka.dispatch._
-import akka.dispatch.sysmsg.SystemMessage
+import akka.dispatch.sysmsg.{ SystemMessageList, SystemMessage, ChildTerminated }
 import akka.event.Logging.{ Warning, Error, Debug }
 import scala.util.control.NonFatal
 import akka.event.Logging
 import scala.collection.immutable
-import akka.dispatch.sysmsg.ChildTerminated
 import akka.actor.PreRestartException
 import akka.actor.Failed
 import akka.actor.PostRestartException
@@ -254,7 +253,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
         publish(Debug(self.path.toString, clazz(actor), "dropping Failed(" + cause + ") from unknown child " + child))
     }
 
-  final protected def handleChildTerminated(child: ActorRef): SystemMessage = {
+  final protected def handleChildTerminated(child: ActorRef): SystemMessageList = {
     val status = removeChildAndGetStateChange(child)
     /*
      * if this fails, we do nothing in case of terminating/restarting state,
@@ -273,10 +272,10 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
      * then we are continuing the previously suspended recreate/create/terminate action
      */
     status match {
-      case Some(c @ ChildrenContainer.Recreation(cause)) ⇒ { finishRecreate(cause, actor); c.dequeueAll() }
-      case Some(c @ ChildrenContainer.Creation()) ⇒ { finishCreate(); c.dequeueAll() }
-      case Some(ChildrenContainer.Termination) ⇒ { finishTerminate(); null }
-      case _ ⇒ null
+      case Some(c @ ChildrenContainer.Recreation(cause)) ⇒ finishRecreate(cause, actor); c.dequeueAll()
+      case Some(c @ ChildrenContainer.Creation()) ⇒ finishCreate(); c.dequeueAll()
+      case Some(ChildrenContainer.Termination) ⇒ finishTerminate(); SystemMessageList.Nil
+      case _ ⇒ SystemMessageList.Nil
     }
   }
 

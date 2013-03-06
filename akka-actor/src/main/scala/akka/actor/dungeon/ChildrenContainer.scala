@@ -7,7 +7,7 @@ package akka.actor.dungeon
 import scala.collection.immutable
 
 import akka.actor.{ InvalidActorNameException, ChildStats, ChildRestartStats, ChildNameReserved, ActorRef }
-import akka.dispatch.sysmsg.SystemMessage
+import akka.dispatch.sysmsg.{ SystemMessageList, SystemMessage }
 import akka.util.Collections.{ EmptyImmutableSeq, PartialImmutableValuesIterable }
 
 /**
@@ -63,9 +63,9 @@ private[akka] object ChildrenContainer {
   }
 
   trait WaitingForChildren {
-    private var todo: SystemMessage = null
-    def enqueue(message: SystemMessage) = { message.next = todo; todo = message }
-    def dequeueAll(): SystemMessage = { val ret = SystemMessage.reverse(todo); todo = null; ret }
+    private var todo: SystemMessageList = SystemMessageList.Nil
+    def enqueue(message: SystemMessage) = todo ::= message
+    def dequeueAll(): SystemMessageList = { val ret = todo.reverse; todo = SystemMessageList.Nil; ret }
   }
 
   trait EmptyChildrenContainer extends ChildrenContainer {

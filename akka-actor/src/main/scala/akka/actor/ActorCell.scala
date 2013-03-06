@@ -349,7 +349,7 @@ private[akka] class ActorCell(
    * MESSAGE PROCESSING
    */
   //Memory consistency is handled by the Mailbox (reading mailbox status then processing messages, then writing mailbox status
-  @tailrec final def systemInvoke(message: SystemMessage): Unit = {
+  @tailrec final def systemInvoke(messages: SystemMessageList): Unit = {
     /*
      * When recreate/suspend/resume are received while restarting (i.e. between
      * preRestart and postRestart, waiting for children to terminate), these
@@ -359,7 +359,8 @@ private[akka] class ActorCell(
      * types (hence the overwrite further down). Mailbox sets message.next=null
      * before systemInvoke, so this will only be non-null during such a replay.
      */
-    var todo = message.next
+    var todo = messages.tail
+    val message = messages.head
     try {
       message match {
         case Create(uid)               ⇒ create(uid)
@@ -388,7 +389,7 @@ private[akka] class ActorCell(
     } catch handleNonFatalOrInterruptedException { e ⇒
       handleInvokeFailure(Nil, e)
     }
-    if (todo != null) systemInvoke(todo)
+    if (!todo.isEmpty) systemInvoke(todo)
   }
 
   //Memory consistency is handled by the Mailbox (reading mailbox status then processing messages, then writing mailbox status
