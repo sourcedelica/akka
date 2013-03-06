@@ -6,7 +6,7 @@ package akka.dispatch
 import java.util.{ Comparator, PriorityQueue, Queue, Deque }
 import java.util.concurrent._
 import akka.AkkaException
-import akka.dispatch.sysmsg.{ SystemMessage, SystemMessageList, NoMessage }
+import akka.dispatch.sysmsg._
 import akka.actor.{ ActorCell, ActorRef, Cell, ActorSystem, InternalActorRef, DeadLetter }
 import akka.util.{ Unsafe, BoundedBlockingQueue }
 import akka.event.Logging.Error
@@ -15,6 +15,9 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import com.typesafe.config.Config
 import scala.concurrent.duration.FiniteDuration
+import akka.actor.DeadLetter
+import akka.dispatch.BoundedMailbox
+import akka.dispatch.BoundedDequeBasedMailbox
 
 /**
  * INTERNAL API
@@ -197,10 +200,15 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
   /*
    * AtomicReferenceFieldUpdater for system queue.
    */
-  protected final def systemQueueGet: SystemMessageList =
-    new SystemMessageList(Unsafe.instance.getObjectVolatile(this, AbstractMailbox.systemMessageOffset).asInstanceOf[SystemMessage])
+  protected final def systemQueueGet: LatestFirstSystemMessageList =
+    // Note: contrary how it looks, there is no allocation here, as SystemMessageList is a value class and as such
+    // it just exists as a typed view during compile-time. The actual return type is still SystemMessage.
+    new LatestFirstSystemMessageList(Unsafe.instance.getObjectVolatile(this, AbstractMailbox.systemMessageOffset).asInstanceOf[SystemMessage])
 
-  protected final def systemQueuePut(_old: SystemMessageList, _new: SystemMessageList): Boolean =
+  protected final def systemQueuePut(_old: LatestFirstSystemMessageList, _new: LatestFirstSystemMessageList): Boolean =
+    // Note: calling .head is not actually existing on the bytecode level as the parameters _old and _new
+    // are SystemMessage instances hidden during compile time behind the SystemMessageList value class.
+    // Without calling .head the parameters would be boxed in SystemMessageList wrapper.
     Unsafe.instance.compareAndSwapObject(this, AbstractMailbox.systemMessageOffset, _old.head, _new.head)
 
   final def canBeScheduledForExecution(hasMessageHint: Boolean, hasSystemMessageHint: Boolean): Boolean = status match {
@@ -249,18 +257,18 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
    */
   final def processAllSystemMessages() {
     var interruption: Throwable = null
-    var messageList = systemDrain(SystemMessageList.Nil)
+    var messageList = systemDrain(SystemMessageList.LNil)
     while ((!messageList.isEmpty) && !isClosed) {
       val msg = messageList.head
       messageList = messageList.tail
       msg.unlink()
       if (debug) println(actor.self + " processing system message " + msg + " with " + actor.childrenRefs)
       // we know here that systemInvoke ensures that only "fatal" exceptions get rethrown
-      actor systemInvoke new SystemMessageList(msg)
+      actor systemInvoke new EarliestFirstSystemMessageList(msg)
       if (Thread.interrupted())
         interruption = new InterruptedException("Interrupted while processing system messages")
       // don’t ever execute normal message when system message present!
-      if ((messageList.isEmpty) && !isClosed) messageList = systemDrain(SystemMessageList.Nil)
+      if ((messageList.isEmpty) && !isClosed) messageList = systemDrain(SystemMessageList.LNil)
     }
     /*
      * if we closed the mailbox, we must dump the remaining system messages
@@ -293,7 +301,7 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
   protected[dispatch] def cleanUp(): Unit =
     if (actor ne null) { // actor is null for the deadLetterMailbox
       val dlm = actor.systemImpl.deadLetterMailbox
-      var messageList = systemDrain(new SystemMessageList(NoMessage))
+      var messageList = systemDrain(new LatestFirstSystemMessageList(NoMessage))
       while (!messageList.isEmpty) {
         // message must be “virgin” before being able to systemEnqueue again
         val msg = messageList.head
@@ -356,7 +364,7 @@ private[akka] trait SystemMessageQueue {
   /**
    * Dequeue all messages from system queue and return them as single-linked list.
    */
-  def systemDrain(newContents: SystemMessageList): SystemMessageList
+  def systemDrain(newContents: LatestFirstSystemMessageList): EarliestFirstSystemMessageList
 
   def hasSystemMessages: Boolean
 }
@@ -382,7 +390,7 @@ private[akka] trait DefaultSystemMessageQueue { self: Mailbox ⇒
   }
 
   @tailrec
-  final def systemDrain(newContents: SystemMessageList): SystemMessageList = {
+  final def systemDrain(newContents: LatestFirstSystemMessageList): EarliestFirstSystemMessageList = {
     val currentList = systemQueueGet
     if (systemQueuePut(currentList, newContents)) currentList.reverse else systemDrain(newContents)
   }

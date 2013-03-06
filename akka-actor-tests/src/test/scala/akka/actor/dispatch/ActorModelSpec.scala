@@ -392,7 +392,7 @@ abstract class ActorModelSpec(config: String) extends AkkaSpec(config) with Defa
                 } foreach {
                   case cell: ActorCell ⇒
                     System.err.println(" - " + cell.self.path + " " + cell.isTerminated + " " + cell.mailbox.status + " "
-                      + cell.mailbox.numberOfMessages + " " + cell.mailbox.systemDrain(SystemMessageList.Nil).size)
+                      + cell.mailbox.numberOfMessages + " " + cell.mailbox.systemDrain(SystemMessageList.LNil).size)
                 }
 
                 System.err.println("Mailbox: " + mq.numberOfMessages + " " + mq.hasMessages)

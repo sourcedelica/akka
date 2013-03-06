@@ -17,6 +17,26 @@ import akka.event.Logging.{ LogEvent, Debug, Error }
 import akka.japi.Procedure
 import akka.dispatch.NullMessage
 import scala.concurrent.ExecutionContext
+import akka.actor.ChildRestartStats
+import akka.actor.SelectParent
+import akka.actor.SelectChildPattern
+import akka.dispatch.sysmsg.Supervise
+import akka.dispatch.sysmsg.Create
+import scala.Some
+import akka.actor.Failed
+import akka.dispatch.sysmsg.Unwatch
+import akka.actor.IllegalActorStateException
+import akka.dispatch.sysmsg.Resume
+import akka.dispatch.sysmsg.Suspend
+import akka.actor.ActorKilledException
+import akka.dispatch.sysmsg.Terminate
+import akka.dispatch.sysmsg.ChildTerminated
+import akka.actor.AddressTerminated
+import akka.actor.Terminated
+import akka.dispatch.sysmsg.Watch
+import akka.actor.SelectChildName
+import akka.dispatch.sysmsg.Recreate
+import akka.event.Logging.Debug
 
 /**
  * The actor context - the view of the actor cell from the actor.
@@ -349,7 +369,7 @@ private[akka] class ActorCell(
    * MESSAGE PROCESSING
    */
   //Memory consistency is handled by the Mailbox (reading mailbox status then processing messages, then writing mailbox status
-  @tailrec final def systemInvoke(messages: SystemMessageList): Unit = {
+  @tailrec final def systemInvoke(messages: EarliestFirstSystemMessageList): Unit = {
     /*
      * When recreate/suspend/resume are received while restarting (i.e. between
      * preRestart and postRestart, waiting for children to terminate), these
@@ -359,7 +379,7 @@ private[akka] class ActorCell(
      * types (hence the overwrite further down). Mailbox sets message.next=null
      * before systemInvoke, so this will only be non-null during such a replay.
      */
-    var todo = messages.tail
+    var todo: EarliestFirstSystemMessageList = messages.tail
     val message = messages.head
     try {
       message match {

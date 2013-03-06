@@ -7,38 +7,50 @@ import scala.annotation.tailrec
 import akka.actor.{ ActorRef, PossiblyHarmful }
 
 object SystemMessageList {
-  final val Nil: SystemMessageList = new SystemMessageList(null)
+  final val LNil: LatestFirstSystemMessageList = new LatestFirstSystemMessageList(null)
+  final val ENil: EarliestFirstSystemMessageList = new EarliestFirstSystemMessageList(null)
+
+  @tailrec
+  private[sysmsg] def sizeInner(head: SystemMessage, acc: Int): Int = if (head eq null) acc else sizeInner(head.next, acc + 1)
+
+  @tailrec
+  private[sysmsg] def reverseInner(head: SystemMessage, acc: SystemMessage): SystemMessage = {
+    if (head eq null) acc else {
+      val next = head.next
+      head.next = acc
+      reverseInner(next, head)
+    }
+  }
 }
 
-class SystemMessageList(val head: SystemMessage) extends AnyVal {
+class LatestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
+  import SystemMessageList._
 
   final def isEmpty: Boolean = head eq null
+  final def size: Int = sizeInner(head, 0)
+  final def tail: LatestFirstSystemMessageList = new LatestFirstSystemMessageList(head.next)
+  final def reverse: EarliestFirstSystemMessageList = new EarliestFirstSystemMessageList(reverseInner(head, null))
 
-  final def size: Int = {
-    @tailrec
-    def sizeInner(head: SystemMessage, acc: Int): Int = if (head eq null) acc else sizeInner(head.next, acc + 1)
-    sizeInner(head, 0)
-  }
-
-  final def tail: SystemMessageList = new SystemMessageList(head.next)
-
-  final def reverse: SystemMessageList = {
-    @tailrec
-    def reverseInner(head: SystemMessage, acc: SystemMessage): SystemMessage = {
-      if (head eq null) acc else {
-        val next = head.next
-        head.next = acc
-        reverseInner(next, head)
-      }
-    }
-
-    new SystemMessageList(reverseInner(head, null))
-  }
-
-  final def ::(msg: SystemMessage): SystemMessageList = {
+  final def ::(msg: SystemMessage): LatestFirstSystemMessageList = {
     assert(msg ne null)
     msg.next = head
-    new SystemMessageList(msg)
+    new LatestFirstSystemMessageList(msg)
+  }
+
+}
+
+class EarliestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
+  import SystemMessageList._
+
+  final def isEmpty: Boolean = head eq null
+  final def size: Int = sizeInner(head, 0)
+  final def tail: EarliestFirstSystemMessageList = new EarliestFirstSystemMessageList(head.next)
+  final def reverse: LatestFirstSystemMessageList = new LatestFirstSystemMessageList(reverseInner(head, null))
+
+  final def ::(msg: SystemMessage): EarliestFirstSystemMessageList = {
+    assert(msg ne null)
+    msg.next = head
+    new EarliestFirstSystemMessageList(msg)
   }
 
 }
