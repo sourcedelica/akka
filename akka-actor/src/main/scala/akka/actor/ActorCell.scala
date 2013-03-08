@@ -440,14 +440,14 @@ private[akka] class ActorCell(
         handleInvokeFailure(Nil, e, "error while processing " + message)
       }
       val newState = calculateState
-      val todo = if (newState != currentState) rest reversePrepend unstashAll() else rest
+      val todo = if (newState < currentState) rest reversePrepend unstashAll() else rest
 
       if (!isTerminated) {
         if (!todo.isEmpty) invokeAll(todo, newState)
       } else dump(todo)
     }
 
-    invokeAll((message :: unstashAll()).reverse, calculateState)
+    invokeAll(new EarliestFirstSystemMessageList(message), calculateState)
   }
 
   //Memory consistency is handled by the Mailbox (reading mailbox status then processing messages, then writing mailbox status
