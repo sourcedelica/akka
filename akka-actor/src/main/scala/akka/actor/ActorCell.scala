@@ -308,6 +308,10 @@ private[akka] object ActorCell {
   final val emptyActorRefSet: Set[ActorRef] = immutable.TreeSet.empty
 
   final val terminatedProps: Props = Props(() ⇒ throw new IllegalActorStateException("This Actor has been terminated"))
+
+  final val DefaultState = 0
+  final val SuspendedState = 1
+  final val SuspendedWaitForChildrenState = 2
 }
 
 //ACTORCELL IS 64bytes and should stay that way unless very good reason not to (machine sympathy, cache line fit)
@@ -388,7 +392,7 @@ private[akka] class ActorCell(
     }
 
     def suspendedBehavior(message: SystemMessage): Unit = message match {
-      case f: Failed                    ⇒ handleFailure(f)
+      case f: Failed                    ⇒ stash(f)
       case Create(uid)                  ⇒ create(uid)
       case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
       case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
@@ -415,7 +419,10 @@ private[akka] class ActorCell(
       case NoMessage                    ⇒ // only here to suppress warning
     }
 
-    def calculateState: Int = if (waitingForChildrenOrNull ne null) 2 else if (mailbox.isSuspended) 1 else 0
+    def calculateState: Int =
+      if (waitingForChildrenOrNull ne null) SuspendedWaitForChildrenState
+      else if (mailbox.isSuspended) SuspendedState
+      else DefaultState
 
     @tailrec def dump(messages: EarliestFirstSystemMessageList): Unit = if (!messages.isEmpty) {
       val tail = messages.tail
@@ -432,9 +439,9 @@ private[akka] class ActorCell(
       message.unlink()
       try {
         currentState match {
-          case 0 ⇒ defaultBehavior(message)
-          case 1 ⇒ suspendedBehavior(message)
-          case 2 ⇒ suspendedWaitingForChildrenBehavior(message)
+          case DefaultState                  ⇒ defaultBehavior(message)
+          case SuspendedState                ⇒ suspendedBehavior(message)
+          case SuspendedWaitForChildrenState ⇒ suspendedWaitingForChildrenBehavior(message)
         }
       } catch handleNonFatalOrInterruptedException { e ⇒
         handleInvokeFailure(Nil, e, "error while processing " + message)
