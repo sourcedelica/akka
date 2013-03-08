@@ -5,7 +5,6 @@
 package akka.actor
 
 import akka.actor.dungeon.ChildrenContainer
-import akka.actor.dungeon.ChildrenContainer.WaitingForChildren
 import akka.dispatch.Envelope
 import akka.dispatch.NullMessage
 import akka.dispatch.sysmsg._
@@ -356,10 +355,10 @@ private[akka] class ActorCell(
     sysmsgStash ::= msg
   }
 
-  protected def unstashAll(): LatestFirstSystemMessageList = {
-    val ret = sysmsgStash
+  private def unstashAll(): LatestFirstSystemMessageList = {
+    val unstashed = sysmsgStash
     sysmsgStash = SystemMessageList.LNil
-    ret
+    unstashed
   }
 
   /*
