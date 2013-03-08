@@ -4,39 +4,20 @@
 
 package akka.actor
 
+import akka.actor.dungeon.ChildrenContainer
+import akka.actor.dungeon.ChildrenContainer.WaitingForChildren
+import akka.dispatch.Envelope
+import akka.dispatch.NullMessage
+import akka.dispatch.sysmsg._
+import akka.event.Logging.Debug
+import akka.event.Logging.{ LogEvent, Error }
+import akka.japi.Procedure
 import java.io.{ ObjectOutputStream, NotSerializableException }
 import scala.annotation.tailrec
 import scala.collection.immutable
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
-import akka.actor.dungeon.ChildrenContainer
-import akka.actor.dungeon.ChildrenContainer.WaitingForChildren
-import akka.dispatch.{ MessageDispatcher, Envelope }
-import akka.dispatch.sysmsg._
-import akka.event.Logging.{ LogEvent, Debug, Error }
-import akka.japi.Procedure
-import akka.dispatch.NullMessage
-import scala.concurrent.ExecutionContext
-import akka.actor.ChildRestartStats
-import akka.actor.SelectParent
-import akka.actor.SelectChildPattern
-import akka.dispatch.sysmsg.Supervise
-import akka.dispatch.sysmsg.Create
-import scala.Some
-import akka.actor.Failed
-import akka.dispatch.sysmsg.Unwatch
-import akka.actor.IllegalActorStateException
-import akka.dispatch.sysmsg.Resume
-import akka.dispatch.sysmsg.Suspend
-import akka.actor.ActorKilledException
-import akka.dispatch.sysmsg.Terminate
-import akka.dispatch.sysmsg.ChildTerminated
-import akka.actor.AddressTerminated
-import akka.actor.Terminated
-import akka.dispatch.sysmsg.Watch
-import akka.actor.SelectChildName
-import akka.dispatch.sysmsg.Recreate
-import akka.event.Logging.Debug
 
 /**
  * The actor context - the view of the actor cell from the actor.
@@ -391,38 +372,82 @@ private[akka] class ActorCell(
      * types (hence the overwrite further down). Mailbox sets message.next=null
      * before systemInvoke, so this will only be non-null during such a replay.
      */
-    var todo: EarliestFirstSystemMessageList = messages.tail
-    val message = messages.head
-    message.unlink()
-    try {
-      message match {
-        case Create(uid)               ⇒ create(uid)
-        case Watch(watchee, watcher)   ⇒ addWatcher(watchee, watcher)
-        case Unwatch(watchee, watcher) ⇒ remWatcher(watchee, watcher)
-        case Recreate(cause) ⇒
-          waitingForChildrenOrNull match {
-            case null                  ⇒ faultRecreate(cause)
-            case w: WaitingForChildren ⇒ stash(message)
-          }
-        case Suspend() ⇒
-          waitingForChildrenOrNull match {
-            case null                  ⇒ faultSuspend()
-            case w: WaitingForChildren ⇒ stash(message)
-          }
-        case Resume(inRespToFailure) ⇒
-          waitingForChildrenOrNull match {
-            case null                  ⇒ faultResume(inRespToFailure)
-            case w: WaitingForChildren ⇒ stash(message)
-          }
-        case Terminate()                  ⇒ terminate()
-        case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
-        case ChildTerminated(child)       ⇒ todo = todo reversePrepend handleChildTerminated(child)
-        case NoMessage                    ⇒ // only here to suppress warning
-      }
-    } catch handleNonFatalOrInterruptedException { e ⇒
-      handleInvokeFailure(Nil, e)
+
+    def defaultBehavior(message: SystemMessage): Unit = message match {
+      case f: Failed                    ⇒ handleFailure(f)
+      case Create(uid)                  ⇒ create(uid)
+      case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
+      case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
+      case Recreate(cause)              ⇒ faultRecreate(cause)
+      case Suspend()                    ⇒ faultSuspend()
+      case Resume(inRespToFailure)      ⇒ faultResume(inRespToFailure)
+      case Terminate()                  ⇒ terminate()
+      case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
+      case ChildTerminated(child)       ⇒ handleChildTerminated(child)
+      case NoMessage                    ⇒ // only here to suppress warning
     }
-    if (!todo.isEmpty) systemInvoke(todo)
+
+    def suspendedBehavior(message: SystemMessage): Unit = message match {
+      case f: Failed                    ⇒ handleFailure(f)
+      case Create(uid)                  ⇒ create(uid)
+      case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
+      case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
+      case Recreate(cause)              ⇒ faultRecreate(cause)
+      case Suspend()                    ⇒ faultSuspend()
+      case Resume(inRespToFailure)      ⇒ faultResume(inRespToFailure)
+      case Terminate()                  ⇒ terminate()
+      case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
+      case ChildTerminated(child)       ⇒ handleChildTerminated(child)
+      case NoMessage                    ⇒ // only here to suppress warning
+    }
+
+    def suspendedWaitingForChildrenBehavior(message: SystemMessage): Unit = message match {
+      case f: Failed                    ⇒ stash(f)
+      case Create(uid)                  ⇒ create(uid)
+      case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
+      case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
+      case Recreate(cause)              ⇒ stash(message)
+      case Suspend()                    ⇒ stash(message)
+      case Resume(inRespToFailure)      ⇒ stash(message)
+      case Terminate()                  ⇒ terminate()
+      case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
+      case ChildTerminated(child)       ⇒ handleChildTerminated(child)
+      case NoMessage                    ⇒ // only here to suppress warning
+    }
+
+    def calculateState: Int = if (waitingForChildrenOrNull ne null) 2 else if (mailbox.isSuspended) 1 else 0
+
+    @tailrec def dump(messages: EarliestFirstSystemMessageList): Unit = if (!messages.isEmpty) {
+      val tail = messages.tail
+      val msg = messages.head
+      msg.unlink()
+      provider.deadLetters ! msg
+      dump(tail)
+    }
+
+    @tailrec
+    def invokeAll(messages: EarliestFirstSystemMessageList, currentState: Int): Unit = {
+      val rest = messages.tail
+      val message = messages.head
+      message.unlink()
+      try {
+        currentState match {
+          case 0 ⇒ defaultBehavior(message)
+          case 1 ⇒ suspendedBehavior(message)
+          case 2 ⇒ suspendedWaitingForChildrenBehavior(message)
+        }
+      } catch handleNonFatalOrInterruptedException { e ⇒
+        handleInvokeFailure(Nil, e, "error while processing " + message)
+      }
+      val newState = calculateState
+      val todo = if (newState != currentState) rest reversePrepend unstashAll() else rest
+
+      if (!isTerminated) {
+        if (!todo.isEmpty) invokeAll(todo, newState)
+      } else dump(todo)
+    }
+
+    invokeAll((message :: unstashAll()).reverse, calculateState)
   }
 
   //Memory consistency is handled by the Mailbox (reading mailbox status then processing messages, then writing mailbox status
@@ -435,7 +460,7 @@ private[akka] class ActorCell(
     }
     currentMessage = null // reset current message after successful invocation
   } catch handleNonFatalOrInterruptedException { e ⇒
-    handleInvokeFailure(Nil, e)
+    handleInvokeFailure(Nil, e, e.getMessage)
   } finally {
     checkReceiveTimeout // Reschedule receive timeout
   }
@@ -446,7 +471,6 @@ private[akka] class ActorCell(
         publish(Debug(self.path.toString, clazz(actor), "received AutoReceiveMessage " + msg))
 
       msg.message match {
-        case Failed(cause, uid)         ⇒ handleFailure(sender, cause, uid)
         case t: Terminated              ⇒ watchedActorTerminated(t)
         case AddressTerminated(address) ⇒ addressTerminated(address)
         case Kill                       ⇒ throw new ActorKilledException("Kill")

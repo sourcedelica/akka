@@ -140,3 +140,9 @@ private[akka] case class Unwatch(watchee: ActorRef, watcher: ActorRef) extends S
  */
 @SerialVersionUID(-5475916034683997987L)
 private[akka] case object NoMessage extends SystemMessage // switched into the mailbox to signal termination
+
+/**
+ * INTERNAL API
+ */
+@SerialVersionUID(3L)
+private[akka] case class Failed(child: ActorRef, cause: Throwable, uid: Int) extends SystemMessage

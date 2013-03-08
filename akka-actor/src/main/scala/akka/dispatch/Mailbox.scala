@@ -264,7 +264,7 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
       msg.unlink()
       if (debug) println(actor.self + " processing system message " + msg + " with " + actor.childrenRefs)
       // we know here that systemInvoke ensures that only "fatal" exceptions get rethrown
-      actor systemInvoke new EarliestFirstSystemMessageList(msg)
+      actor systemInvoke msg
       if (Thread.interrupted())
         interruption = new InterruptedException("Interrupted while processing system messages")
       // don’t ever execute normal message when system message present!
