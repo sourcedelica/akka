@@ -391,7 +391,7 @@ private[akka] class ActorCell(
     }
 
     def suspendedBehavior(message: SystemMessage): Unit = message match {
-      case f: Failed                    ⇒ stash(f)
+      case _: Failed                    ⇒ stash(message)
       case Create(uid)                  ⇒ create(uid)
       case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
       case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
@@ -405,13 +405,13 @@ private[akka] class ActorCell(
     }
 
     def suspendedWaitingForChildrenBehavior(message: SystemMessage): Unit = message match {
-      case f: Failed                    ⇒ stash(f)
+      case _: Failed                    ⇒ stash(message)
       case Create(uid)                  ⇒ create(uid)
       case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
       case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
-      case Recreate(cause)              ⇒ stash(message)
-      case Suspend()                    ⇒ stash(message)
-      case Resume(inRespToFailure)      ⇒ stash(message)
+      case _: Recreate                  ⇒ stash(message)
+      case _: Suspend                   ⇒ stash(message)
+      case _: Resume                    ⇒ stash(message)
       case Terminate()                  ⇒ terminate()
       case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
       case ChildTerminated(child)       ⇒ handleChildTerminated(child)
@@ -446,6 +446,8 @@ private[akka] class ActorCell(
         handleInvokeFailure(Nil, e, "error while processing " + message)
       }
       val newState = calculateState
+      // As each state accepts a strict subset of another state, it is enough to unstash if we "walk up" the state
+      // chain
       val todo = if (newState < currentState) rest reversePrepend unstashAll() else rest
 
       if (!isTerminated) {
