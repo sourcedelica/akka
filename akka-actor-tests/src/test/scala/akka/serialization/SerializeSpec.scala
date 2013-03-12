@@ -125,6 +125,7 @@ object SerializationTests {
     classOf[ChildTerminated],
     classOf[Watch],
     classOf[Unwatch],
+    classOf[Failed],
     NoMessage.getClass)
 }
 
