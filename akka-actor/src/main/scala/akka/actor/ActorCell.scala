@@ -12,7 +12,7 @@ import akka.event.Logging.Debug
 import akka.event.Logging.{ LogEvent, Error }
 import akka.japi.Procedure
 import java.io.{ ObjectOutputStream, NotSerializableException }
-import scala.annotation.tailrec
+import scala.annotation.{ switch, tailrec }
 import scala.collection.immutable
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.Duration
@@ -376,60 +376,27 @@ private[akka] class ActorCell(
      * before systemInvoke, so this will only be non-null during such a replay.
      */
 
-    def defaultBehavior(message: SystemMessage): Unit = message match {
-      case f: Failed                    ⇒ handleFailure(f)
-      case Create(uid)                  ⇒ create(uid)
-      case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
-      case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
-      case Recreate(cause)              ⇒ faultRecreate(cause)
-      case Suspend()                    ⇒ faultSuspend()
-      case Resume(inRespToFailure)      ⇒ faultResume(inRespToFailure)
-      case Terminate()                  ⇒ terminate()
-      case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
-      case ChildTerminated(child)       ⇒ handleChildTerminated(child)
-      case NoMessage                    ⇒ // only here to suppress warning
-    }
-
-    def suspendedBehavior(message: SystemMessage): Unit = message match {
-      case _: Failed                    ⇒ stash(message)
-      case Create(uid)                  ⇒ create(uid)
-      case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
-      case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
-      case Recreate(cause)              ⇒ faultRecreate(cause)
-      case Suspend()                    ⇒ faultSuspend()
-      case Resume(inRespToFailure)      ⇒ faultResume(inRespToFailure)
-      case Terminate()                  ⇒ terminate()
-      case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
-      case ChildTerminated(child)       ⇒ handleChildTerminated(child)
-      case NoMessage                    ⇒ // only here to suppress warning
-    }
-
-    def suspendedWaitingForChildrenBehavior(message: SystemMessage): Unit = message match {
-      case _: Failed                    ⇒ stash(message)
-      case Create(uid)                  ⇒ create(uid)
-      case Watch(watchee, watcher)      ⇒ addWatcher(watchee, watcher)
-      case Unwatch(watchee, watcher)    ⇒ remWatcher(watchee, watcher)
-      case _: Recreate                  ⇒ stash(message)
-      case _: Suspend                   ⇒ stash(message)
-      case _: Resume                    ⇒ stash(message)
-      case Terminate()                  ⇒ terminate()
-      case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
-      case ChildTerminated(child)       ⇒ handleChildTerminated(child)
-      case NoMessage                    ⇒ // only here to suppress warning
-    }
-
     def calculateState: Int =
       if (waitingForChildrenOrNull ne null) SuspendedWaitForChildrenState
       else if (mailbox.isSuspended) SuspendedState
       else DefaultState
 
-    @tailrec def dump(messages: EarliestFirstSystemMessageList): Unit = if (!messages.isEmpty) {
-      val tail = messages.tail
-      val msg = messages.head
-      msg.unlink()
-      provider.deadLetters ! msg
-      dump(tail)
-    }
+    @tailrec def sendAllToDeadLetters(messages: EarliestFirstSystemMessageList): Unit =
+      if (messages.nonEmpty) {
+        val tail = messages.tail
+        val msg = messages.head
+        msg.unlink()
+        provider.deadLetters ! msg
+        sendAllToDeadLetters(tail)
+      }
+
+    def shouldStash(m: SystemMessage, state: Int): Boolean =
+      (state: @switch) match {
+        case DefaultState   ⇒ false
+        case SuspendedState ⇒ m.isInstanceOf[Failed]
+        case SuspendedWaitForChildrenState ⇒
+          m.isInstanceOf[Failed] || m.isInstanceOf[Recreate] || m.isInstanceOf[Suspend] || m.isInstanceOf[Resume]
+      }
 
     @tailrec
     def invokeAll(messages: EarliestFirstSystemMessageList, currentState: Int): Unit = {
@@ -437,10 +404,19 @@ private[akka] class ActorCell(
       val message = messages.head
       message.unlink()
       try {
-        currentState match {
-          case DefaultState                  ⇒ defaultBehavior(message)
-          case SuspendedState                ⇒ suspendedBehavior(message)
-          case SuspendedWaitForChildrenState ⇒ suspendedWaitingForChildrenBehavior(message)
+        message match {
+          case message: SystemMessage if shouldStash(message, currentState) ⇒ stash(message)
+          case f: Failed ⇒ handleFailure(f)
+          case Create(uid) ⇒ create(uid)
+          case Watch(watchee, watcher) ⇒ addWatcher(watchee, watcher)
+          case Unwatch(watchee, watcher) ⇒ remWatcher(watchee, watcher)
+          case Recreate(cause) ⇒ faultRecreate(cause)
+          case Suspend() ⇒ faultSuspend()
+          case Resume(inRespToFailure) ⇒ faultResume(inRespToFailure)
+          case Terminate() ⇒ terminate()
+          case Supervise(child, async, uid) ⇒ supervise(child, async, uid)
+          case ChildTerminated(child) ⇒ handleChildTerminated(child)
+          case NoMessage ⇒ // only here to suppress warning
         }
       } catch handleNonFatalOrInterruptedException { e ⇒
         handleInvokeFailure(Nil, e)
@@ -448,11 +424,10 @@ private[akka] class ActorCell(
       val newState = calculateState
       // As each state accepts a strict subset of another state, it is enough to unstash if we "walk up" the state
       // chain
-      val todo = if (newState < currentState) rest reversePrepend unstashAll() else rest
+      val todo = if (newState < currentState) unstashAll() reverse_::: rest else rest
 
-      if (!isTerminated) {
-        if (!todo.isEmpty) invokeAll(todo, newState)
-      } else dump(todo)
+      if (isTerminated) sendAllToDeadLetters(todo)
+      else if (todo.nonEmpty) invokeAll(todo, newState)
     }
 
     invokeAll(new EarliestFirstSystemMessageList(message), calculateState)

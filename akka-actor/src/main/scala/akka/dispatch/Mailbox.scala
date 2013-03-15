@@ -258,7 +258,7 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
   final def processAllSystemMessages() {
     var interruption: Throwable = null
     var messageList = systemDrain(SystemMessageList.LNil)
-    while ((!messageList.isEmpty) && !isClosed) {
+    while ((messageList.nonEmpty) && !isClosed) {
       val msg = messageList.head
       messageList = messageList.tail
       msg.unlink()
@@ -275,7 +275,7 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
      * to deadLetters (this is essential for DeathWatch)
      */
     val dlm = actor.systemImpl.deadLetterMailbox
-    while (!messageList.isEmpty) {
+    while (messageList.nonEmpty) {
       val msg = messageList.head
       messageList = messageList.tail
       msg.unlink()
@@ -302,7 +302,7 @@ private[akka] abstract class Mailbox(val messageQueue: MessageQueue)
     if (actor ne null) { // actor is null for the deadLetterMailbox
       val dlm = actor.systemImpl.deadLetterMailbox
       var messageList = systemDrain(new LatestFirstSystemMessageList(NoMessage))
-      while (!messageList.isEmpty) {
+      while (messageList.nonEmpty) {
         // message must be “virgin” before being able to systemEnqueue again
         val msg = messageList.head
         messageList = messageList.tail
@@ -395,7 +395,7 @@ private[akka] trait DefaultSystemMessageQueue { self: Mailbox ⇒
     if (systemQueuePut(currentList, newContents)) currentList.reverse else systemDrain(newContents)
   }
 
-  def hasSystemMessages: Boolean = !systemQueueGet.isEmpty
+  def hasSystemMessages: Boolean = systemQueueGet.nonEmpty
 
 }
 

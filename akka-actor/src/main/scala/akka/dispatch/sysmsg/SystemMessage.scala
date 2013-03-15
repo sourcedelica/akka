@@ -33,7 +33,7 @@ object SystemMessageList {
  *
  * INTERNAL API
  *
- * Value class supporting list operations on system messages. The {{{next}}} field of [[akka.dispatch.sysmsg.SystemMessage]]
+ * Value class supporting list operations on system messages. The `next` field of [[akka.dispatch.sysmsg.SystemMessage]]
  * is hidden, and can only accessed through the value classes [[akka.dispatch.sysmsg.LatestFirstSystemMessageList]] and
  * [[akka.dispatch.sysmsg.EarliestFirstSystemMessageList]], abstracting over the fact that system messages are the
  * list nodes themselves. If used properly, this stays a compile time construct without any allocation overhead.
@@ -51,6 +51,11 @@ class LatestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
    * Indicates if the list is empty or not. This operation has constant cost.
    */
   final def isEmpty: Boolean = head eq null
+
+  /**
+   * Indicates if the list has at least one element or not. This operation has constant cost.
+   */
+  final def nonEmpty: Boolean = head ne null
 
   /**
    * Indicates if the list is empty or not. This operation has constant cost.
@@ -89,7 +94,7 @@ class LatestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
  *
  * INTERNAL API
  *
- * Value class supporting list operations on system messages. The {{{next}}} field of [[akka.dispatch.sysmsg.SystemMessage]]
+ * Value class supporting list operations on system messages. The `next` field of [[akka.dispatch.sysmsg.SystemMessage]]
  * is hidden, and can only accessed through the value classes [[akka.dispatch.sysmsg.LatestFirstSystemMessageList]] and
  * [[akka.dispatch.sysmsg.EarliestFirstSystemMessageList]], abstracting over the fact that system messages are the
  * list nodes themselves. If used properly, this stays a compile time construct without any allocation overhead.
@@ -107,6 +112,11 @@ class EarliestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
    * Indicates if the list is empty or not. This operation has constant cost.
    */
   final def isEmpty: Boolean = head eq null
+
+  /**
+   * Indicates if the list has at least one element or not. This operation has constant cost.
+   */
+  final def nonEmpty: Boolean = head ne null
 
   /**
    * Indicates if the list is empty or not. This operation has constant cost.
@@ -146,10 +156,10 @@ class EarliestFirstSystemMessageList(val head: SystemMessage) extends AnyVal {
    *
    * The cost of this operation is linear in the size of the list that is to be prepended.
    */
-  final def reversePrepend(other: LatestFirstSystemMessageList): EarliestFirstSystemMessageList = {
+  final def reverse_:::(other: LatestFirstSystemMessageList): EarliestFirstSystemMessageList = {
     var remaining = other
     var result = this
-    while (!remaining.isEmpty) {
+    while (remaining.nonEmpty) {
       val msg = remaining.head
       remaining = remaining.tail
       result ::= msg

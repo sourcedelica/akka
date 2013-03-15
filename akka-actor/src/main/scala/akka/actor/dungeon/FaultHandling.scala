@@ -252,8 +252,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
        * killed in preRestart and re-created in postRestart
        */
       case Some(stats) if stats.uid == f.uid ⇒
-        if (isFailed) stash(f)
-        else if (!actor.supervisorStrategy.handleFailure(this, f.child, f.cause, stats, getAllChildStats)) throw f.cause
+        if (!actor.supervisorStrategy.handleFailure(this, f.child, f.cause, stats, getAllChildStats)) throw f.cause
       case Some(stats) ⇒
         publish(Debug(self.path.toString, clazz(actor),
           "dropping Failed(" + f.cause + ") from old child " + f.child + " (uid=" + stats.uid + " != " + f.uid + ")"))
