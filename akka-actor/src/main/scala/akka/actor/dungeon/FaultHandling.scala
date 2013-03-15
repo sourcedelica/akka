@@ -135,7 +135,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
     finally clearFailed()
     try create(uid)
     catch handleNonFatalOrInterruptedException { e ⇒
-      handleInvokeFailure(Nil, e, s"error while processing Create($uid)")
+      handleInvokeFailure(Nil, e)
     }
   }
 
@@ -165,8 +165,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
     }
   }
 
-  final def handleInvokeFailure(childrenNotToSuspend: immutable.Iterable[ActorRef], t: Throwable, message: String): Unit = {
-    publish(Error(t, self.path.toString, clazz(actor), message))
+  final def handleInvokeFailure(childrenNotToSuspend: immutable.Iterable[ActorRef], t: Throwable): Unit = {
     // prevent any further messages to be processed until the actor has been restarted
     if (!isFailed) try {
       suspendNonRecursive()

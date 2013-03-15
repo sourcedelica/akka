@@ -365,7 +365,7 @@ private[akka] class ActorCell(
    * MESSAGE PROCESSING
    */
   //Memory consistency is handled by the Mailbox (reading mailbox status then processing messages, then writing mailbox status
-  @tailrec final def systemInvoke(messages: EarliestFirstSystemMessageList): Unit = {
+  final def systemInvoke(message: SystemMessage): Unit = {
     /*
      * When recreate/suspend/resume are received while restarting (i.e. between
      * preRestart and postRestart, waiting for children to terminate), these
@@ -443,7 +443,7 @@ private[akka] class ActorCell(
           case SuspendedWaitForChildrenState ⇒ suspendedWaitingForChildrenBehavior(message)
         }
       } catch handleNonFatalOrInterruptedException { e ⇒
-        handleInvokeFailure(Nil, e, "error while processing " + message)
+        handleInvokeFailure(Nil, e)
       }
       val newState = calculateState
       // As each state accepts a strict subset of another state, it is enough to unstash if we "walk up" the state
@@ -468,7 +468,7 @@ private[akka] class ActorCell(
     }
     currentMessage = null // reset current message after successful invocation
   } catch handleNonFatalOrInterruptedException { e ⇒
-    handleInvokeFailure(Nil, e, e.getMessage)
+    handleInvokeFailure(Nil, e)
   } finally {
     checkReceiveTimeout // Reschedule receive timeout
   }
