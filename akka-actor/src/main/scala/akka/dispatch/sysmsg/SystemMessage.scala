@@ -193,6 +193,10 @@ private[akka] sealed trait SystemMessage extends PossiblyHarmful with Serializab
   def unlinked: Boolean = next eq null
 }
 
+trait StashWhenWaitingForChildren
+
+trait StashWhenFailed
+
 /**
  * INTERNAL API
  */
@@ -202,17 +206,17 @@ private[akka] case class Create(uid: Int) extends SystemMessage // send to self 
  * INTERNAL API
  */
 @SerialVersionUID(686735569005808256L)
-private[akka] case class Recreate(cause: Throwable) extends SystemMessage // sent to self from ActorCell.restart
+private[akka] case class Recreate(cause: Throwable) extends SystemMessage with StashWhenWaitingForChildren // sent to self from ActorCell.restart
 /**
  * INTERNAL API
  */
 @SerialVersionUID(7270271967867221401L)
-private[akka] case class Suspend() extends SystemMessage // sent to self from ActorCell.suspend
+private[akka] case class Suspend() extends SystemMessage with StashWhenWaitingForChildren // sent to self from ActorCell.suspend
 /**
  * INTERNAL API
  */
 @SerialVersionUID(-2567504317093262591L)
-private[akka] case class Resume(causedByFailure: Throwable) extends SystemMessage // sent to self from ActorCell.resume
+private[akka] case class Resume(causedByFailure: Throwable) extends SystemMessage with StashWhenWaitingForChildren // sent to self from ActorCell.resume
 /**
  * INTERNAL API
  */
@@ -249,3 +253,5 @@ private[akka] case object NoMessage extends SystemMessage // switched into the m
  */
 @SerialVersionUID(3L)
 private[akka] case class Failed(child: ActorRef, cause: Throwable, uid: Int) extends SystemMessage
+  with StashWhenFailed
+  with StashWhenWaitingForChildren

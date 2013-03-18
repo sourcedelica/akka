@@ -392,10 +392,9 @@ private[akka] class ActorCell(
 
     def shouldStash(m: SystemMessage, state: Int): Boolean =
       (state: @switch) match {
-        case DefaultState   ⇒ false
-        case SuspendedState ⇒ m.isInstanceOf[Failed]
-        case SuspendedWaitForChildrenState ⇒
-          m.isInstanceOf[Failed] || m.isInstanceOf[Recreate] || m.isInstanceOf[Suspend] || m.isInstanceOf[Resume]
+        case DefaultState                  ⇒ false
+        case SuspendedState                ⇒ m.isInstanceOf[StashWhenFailed]
+        case SuspendedWaitForChildrenState ⇒ m.isInstanceOf[StashWhenWaitingForChildren]
       }
 
     @tailrec
