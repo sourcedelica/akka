@@ -49,6 +49,8 @@ object ActorSystemSpec {
           master ! "done"
           context stop self
         }
+      case "dump" ⇒
+        println(s"$self still waiting for $terminaters")
     }
 
     override def preRestart(cause: Throwable, msg: Option[Any]) {
@@ -214,10 +216,18 @@ class ActorSystemSpec extends AkkaSpec(ActorSystemSpec.config) with ImplicitSend
     }
 
     "reliably create waves of actors" in {
-      import system.dispatcher
-      implicit val timeout = Timeout(30 seconds)
-      val waves = for (i ← 1 to 3) yield system.actorOf(Props[ActorSystemSpec.Waves]) ? 50000
-      Await.result(Future.sequence(waves), timeout.duration + 5.seconds) must be === Seq("done", "done", "done")
+      val waveActors = for (i ← 1 to 3) yield system.actorOf(Props[ActorSystemSpec.Waves], s"Waves-${i}")
+      try {
+        import system.dispatcher
+        implicit val timeout = Timeout(30 seconds)
+        val waves = waveActors map (_ ? 50000)
+        Await.result(Future.sequence(waves), timeout.duration + 5.seconds) must be === Seq("done", "done", "done")
+      } catch {
+        case t: Throwable ⇒
+          println(system.asInstanceOf[ActorSystemImpl].printTree)
+          waveActors foreach (_ ! "dump")
+          throw t
+      }
     }
 
     "find actors that just have been created" in {
