@@ -151,29 +151,6 @@ private[cluster] object InternalClusterAction {
 /**
  * INTERNAL API.
  *
- * Cluster commands sent by the LEADER.
- */
-private[cluster] object ClusterLeaderAction {
-
-  /**
-   * Command to mark a node to be removed from the cluster immediately.
-   * Can only be sent by the leader.
-   * @param node the node to exit, i.e. destination of the message
-   */
-  @SerialVersionUID(1L)
-  case class Exit(node: UniqueAddress) extends ClusterMessage
-
-  /**
-   * Command to remove a node from the cluster immediately.
-   * @param node the node to shutdown, i.e. destination of the message
-   */
-  @SerialVersionUID(1L)
-  case class Shutdown(node: UniqueAddress) extends ClusterMessage
-}
-
-/**
- * INTERNAL API.
- *
  * Supervisor managing the different Cluster daemons.
  */
 private[cluster] final class ClusterDaemon(settings: ClusterSettings) extends Actor with ActorLogging
@@ -239,7 +216,6 @@ private[cluster] final class ClusterCoreSupervisor extends Actor with ActorLoggi
  */
 private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Actor with ActorLogging
   with RequiresMessageQueue[UnboundedMessageQueueSemantics] {
-  import ClusterLeaderAction._
   import InternalClusterAction._
 
   val cluster = Cluster(context.system)
@@ -263,7 +239,7 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
   private def clusterCore(address: Address): ActorSelection =
     context.actorSelection(RootActorPath(address) / "system" / "cluster" / "core" / "daemon")
 
-  val heartbeatSender = context.actorOf(Props[ClusterHeartbeatSender].
+  context.actorOf(Props[ClusterHeartbeatSender].
     withDispatcher(UseDispatcher), name = "heartbeatSender")
 
   import context.dispatcher
@@ -334,8 +310,6 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
     case Join(node, roles)                ⇒ joining(node, roles)
     case ClusterUserAction.Down(address)  ⇒ downing(address)
     case ClusterUserAction.Leave(address) ⇒ leaving(address)
-    case Exit(node)                       ⇒ exiting(node)
-    case Shutdown(node)                   ⇒ shutdown(node)
     case SendGossipTo(address)            ⇒ sendGossipTo(address)
     case msg: SubscriptionMessage         ⇒ publisher forward msg
     case ClusterUserAction.JoinTo(address) ⇒
@@ -505,23 +479,12 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
   }
 
   /**
-   * State transition to EXITING.
+   * This method is called when a member sees itself as Exiting.
    */
-  def exiting(node: UniqueAddress): Unit =
-    if (node == selfUniqueAddress) {
-      log.info("Cluster Node [{}] - Marked as [{}]", selfAddress, Exiting)
-      // TODO implement when we need hand-off
-    }
-
-  /**
-   * This method is only called after the LEADER has sent a Shutdown message - telling the node
-   * to shut down himself.
-   */
-  def shutdown(node: UniqueAddress): Unit =
-    if (node == selfUniqueAddress) {
-      log.info("Cluster Node [{}] - Node has been REMOVED by the leader - shutting down...", selfAddress)
-      cluster.shutdown()
-    }
+  def shutdown(): Unit = {
+    log.info("Cluster Node [{}] - Node shutting down...", latestGossip.member(selfUniqueAddress))
+    cluster.shutdown()
+  }
 
   /**
    * State transition to DOW.
@@ -645,7 +608,9 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
       stats = stats.incrementReceivedGossipCount
       publish(latestGossip)
 
-      if (talkback) {
+      if (latestGossip.member(selfUniqueAddress).status == Exiting)
+        shutdown()
+      else if (talkback) {
         // send back gossip to sender when sender had different view, i.e. merge, or sender had
         // older or sender had newer
         gossipTo(from, sender)
@@ -716,25 +681,26 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
       }
 
       // Leader actions are as follows:
-      //   1. Move JOINING     => UP          -- When a node joins the cluster
-      //   2. Move LEAVING     => EXITING     -- When all partition handoff has completed
-      //   3. Non-exiting remain              -- When all partition handoff has completed
-      //   4. Move EXITING     => REMOVED     -- When all nodes have seen that the node is EXITING (convergence) - remove the nodes from the node ring and seen table
-      //   5. Move UNREACHABLE => DOWN        -- When the node is in the UNREACHABLE set it can be auto-down by leader
-      //   6. Move DOWN        => REMOVED     -- When all nodes have seen that the node is DOWN (convergence) - remove the nodes from the node ring and seen table
+      //   1. Move JOINING     => UP              -- When a node joins the cluster
+      //   2. Move LEAVING     => EXITING         -- When all partition handoff has completed
+      //   3. Non-exiting remain                  -- When all partition handoff has completed
+      //   4. Move unreachable EXITING => REMOVED -- When all nodes have seen the EXITING node as unreachable (convergence) -
+      //                                             remove the node from the node ring and seen table
+      //   5. Move UNREACHABLE => DOWN            -- When the node is in the UNREACHABLE set it can be auto-down by leader
+      //   6. Move unreachable DOWN => REMOVED    -- When all nodes have seen that the node is DOWN (convergence) -
+      //                                             remove the node from the node ring and seen table
       //   7. Updating the vclock version for the changes
       //   8. Updating the `seen` table
-      //   9. Try to update the state with the new gossip
-      //  10. If success - run all the side-effecting processing
+      //   9. Update the state with the new gossip
+      //  10. Run all the side-effecting processing at the end
 
       val (
         newGossip: Gossip,
         hasChangedState: Boolean,
         upMembers,
         exitingMembers,
-        removedMembers,
         removedUnreachableMembers,
-        unreachableButNotDownedMembers) =
+        downedMembers) =
 
         if (localGossip.convergence) {
           // we have convergence - so we can't have unreachable nodes
@@ -747,13 +713,13 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
           def isJoiningToUp(m: Member): Boolean = m.status == Joining && enoughMembers
 
           // transform the node member ring
-          val newMembers = localMembers collect {
+          val newMembers = localMembers map {
             var upNumber = 0
 
             {
               // Move JOINING => UP (once all nodes have seen that this node is JOINING, i.e. we have a convergence)
               // and minimum number of nodes have joined the cluster
-              case member if isJoiningToUp(member) ⇒
+              case m if isJoiningToUp(m) ⇒
                 if (upNumber == 0) {
                   // It is alright to use same upNumber as already used by a removed member, since the upNumber
                   // is only used for comparing age of current cluster members (Member.isOlderThan)
@@ -762,14 +728,13 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
                 } else {
                   upNumber += 1
                 }
-                member.copyUp(upNumber)
+                m.copyUp(upNumber)
               // Move LEAVING => EXITING (once we have a convergence on LEAVING
               // *and* if we have a successful partition handoff)
-              case member if member.status == Leaving && hasPartionHandoffCompletedSuccessfully ⇒
-                member copy (status = Exiting)
+              case m if m.status == Leaving && hasPartionHandoffCompletedSuccessfully ⇒
+                m copy (status = Exiting)
               // Everyone else that is not Exiting stays as they are
-              case member if member.status != Exiting && member.status != Down ⇒ member
-              // Move EXITING => REMOVED, DOWN => REMOVED - i.e. remove the nodes from the `members` set/node ring and seen table
+              case m ⇒ m
             }
           }
 
@@ -782,22 +747,21 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
           // to check for state-changes and to store away removed and exiting members for later notification
           //    1. check for state-changes to update
           //    2. store away removed and exiting members so we can separate the pure state changes
-          val (removedMembers, newMembers1) = localMembers partition (m ⇒ m.status == Exiting || m.status == Down)
-          val (removedUnreachable, newUnreachable) = localUnreachableMembers partition (_.status == Down)
+          val (removedUnreachable, newUnreachable) = localUnreachableMembers partition (m ⇒ m.status == Down || m.status == Exiting)
 
-          val (upMembers, newMembers2) = newMembers1 partition (isJoiningToUp(_))
+          val (upMembers, newMembers2) = localMembers partition (isJoiningToUp(_))
 
           val exitingMembers = newMembers2 filter (_.status == Leaving && hasPartionHandoffCompletedSuccessfully)
 
-          val hasChangedState = removedMembers.nonEmpty || removedUnreachable.nonEmpty || upMembers.nonEmpty || exitingMembers.nonEmpty
+          val hasChangedState = removedUnreachable.nonEmpty || upMembers.nonEmpty || exitingMembers.nonEmpty
 
           // removing REMOVED nodes from the `seen` table
-          val newSeen = localSeen -- removedMembers.map(_.uniqueAddress) -- removedUnreachable.map(_.uniqueAddress)
+          val newSeen = localSeen -- removedUnreachable.map(_.uniqueAddress)
 
           val newOverview = localOverview copy (seen = newSeen, unreachable = newUnreachable) // update gossip overview
           val newGossip = localGossip copy (members = newMembers, overview = newOverview) // update gossip
 
-          (newGossip, hasChangedState, upMembers, exitingMembers, removedMembers, removedUnreachable, Member.none)
+          (newGossip, hasChangedState, upMembers, exitingMembers, removedUnreachable, Member.none)
 
         } else if (AutoDown) {
           // we don't have convergence - so we might have unreachable nodes
@@ -807,24 +771,24 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
             // ----------------------
             // Move UNREACHABLE => DOWN (auto-downing by leader)
             // ----------------------
-            case member if member.status != Down ⇒ member copy (status = Down)
-            case downMember                      ⇒ downMember // no need to DOWN members already DOWN
+            case m if m.status != Down && m.status != Exiting ⇒ m copy (status = Down)
+            case downMember                                   ⇒ downMember // no need to DOWN members already DOWN
           }
 
           // Check for the need to do side-effecting on successful state change
-          val unreachableButNotDownedMembers = localUnreachableMembers filter (_.status != Down)
+          val downedMembers = localUnreachableMembers filter (m ⇒ m.status != Down && m.status != Exiting)
 
-          // removing nodes marked as DOWN from the `seen` table
-          val newSeen = localSeen -- newUnreachableMembers.collect { case m if m.status == Down ⇒ m.uniqueAddress }
+          // removing nodes marked as Down/Exiting from the `seen` table
+          val newSeen = localSeen -- newUnreachableMembers.collect { case m if m.status == Down || m.status == Exiting ⇒ m.uniqueAddress }
 
           val newOverview = localOverview copy (seen = newSeen, unreachable = newUnreachableMembers) // update gossip overview
           val newGossip = localGossip copy (overview = newOverview) // update gossip
 
-          (newGossip, unreachableButNotDownedMembers.nonEmpty, Member.none, Member.none, Member.none, Member.none, unreachableButNotDownedMembers)
+          (newGossip, downedMembers.nonEmpty, Member.none, Member.none, Member.none, downedMembers)
 
-        } else (localGossip, false, Member.none, Member.none, Member.none, Member.none, Member.none)
+        } else (localGossip, false, Member.none, Member.none, Member.none, Member.none)
 
-      if (hasChangedState) { // we have a change of state - version it and try to update
+      if (hasChangedState) { // we have a change of state - version it and update
         // ----------------------
         // Updating the vclock version for the changes
         // ----------------------
@@ -832,11 +796,8 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
 
         // ----------------------
         // Updating the `seen` table
-        // Unless the leader (this node) is part of the removed members, i.e. the leader have moved himself from EXITING -> REMOVED
         // ----------------------
-        val seenVersionedGossip =
-          if (removedMembers.exists(_.uniqueAddress == selfUniqueAddress)) versionedGossip
-          else versionedGossip seen selfUniqueAddress
+        val seenVersionedGossip = versionedGossip seen selfUniqueAddress
 
         // ----------------------
         // Update the state with the new gossip
@@ -848,38 +809,37 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
         // ----------------------
 
         // log the move of members from joining to up
-        upMembers foreach { member ⇒
+        upMembers foreach { m ⇒
           log.info("Cluster Node [{}] - Leader is moving node [{}] from [{}] to [{}]",
-            selfAddress, member.address, member.status, Up)
+            selfAddress, m.address, m.status, Up)
         }
 
-        //  tell all removed members to remove and shut down themselves
-        removedMembers foreach { member ⇒
-          val address = member.address
-          log.info("Cluster Node [{}] - Leader is moving node [{}] from [{}] to [{}] - and removing node from node ring",
-            selfAddress, address, member.status, Removed)
-          clusterCore(address) ! ClusterLeaderAction.Shutdown(member.uniqueAddress)
-        }
-
-        //  tell all exiting members to exit
-        exitingMembers foreach { member ⇒
-          val address = member.address
+        // log the move of members from leaving to exiting
+        exitingMembers foreach { m ⇒
           log.info("Cluster Node [{}] - Leader is moving node [{}] from [{}] to [{}]",
-            selfAddress, address, member.status, Exiting)
-          clusterCore(address) ! ClusterLeaderAction.Exit(member.uniqueAddress) // FIXME should wait for completion of handoff?
+            selfAddress, m.address, m.status, Exiting)
         }
 
         // log the auto-downing of the unreachable nodes
-        unreachableButNotDownedMembers foreach { member ⇒
-          log.info("Cluster Node [{}] - Leader is marking unreachable node [{}] as [{}]", selfAddress, member.address, Down)
+        downedMembers foreach { m ⇒
+          log.info("Cluster Node [{}] - Leader is marking unreachable node [{}] as [{}]", selfAddress, m.address, Down)
         }
 
-        // log the auto-downing of the unreachable nodes
-        removedUnreachableMembers foreach { member ⇒
-          log.info("Cluster Node [{}] - Leader is removing unreachable node [{}]", selfAddress, member.address)
+        // log the removal of the unreachable nodes
+        removedUnreachableMembers foreach { m ⇒
+          val status = if (m.status == Exiting) "exiting" else "unreachable"
+          log.info("Cluster Node [{}] - Leader is removing {} node [{}]", selfAddress, status, m.address)
         }
 
         publish(latestGossip)
+
+        if (latestGossip.member(selfUniqueAddress).status == Exiting) {
+          // moving itself from Leaving to Exiting
+          // let others know (best effort) before shutdown
+          for (_ ← 1 to 3) gossip()
+          shutdown()
+        }
+
       }
     }
   }
@@ -897,7 +857,7 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
       val localUnreachableMembers = localGossip.overview.unreachable
 
       val newlyDetectedUnreachableMembers = localMembers filterNot { member ⇒
-        member.uniqueAddress == selfUniqueAddress || member.status == Exiting || failureDetector.isAvailable(member.address)
+        member.uniqueAddress == selfUniqueAddress || failureDetector.isAvailable(member.address)
       }
 
       if (newlyDetectedUnreachableMembers.nonEmpty) {
@@ -914,7 +874,12 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
 
         latestGossip = seenVersionedGossip
 
-        log.error("Cluster Node [{}] - Marking node(s) as UNREACHABLE [{}]", selfAddress, newlyDetectedUnreachableMembers.mkString(", "))
+        val (exiting, nonExiting) = newlyDetectedUnreachableMembers.partition(_.status == Exiting)
+        if (nonExiting.nonEmpty)
+          log.error("Cluster Node [{}] - Marking node(s) as UNREACHABLE [{}]", selfAddress, nonExiting.mkString(", "))
+        if (exiting.nonEmpty)
+          log.info("Cluster Node [{}] - Marking exiting node(s) as UNREACHABLE [{}]. This is expected and they will be removed.",
+            selfAddress, exiting.mkString(", "))
 
         publish(latestGossip)
       }

@@ -128,6 +128,7 @@ private[cluster] final class ClusterHeartbeatSender extends Actor with ActorLogg
     case UnreachableMember(m)         ⇒ removeMember(m)
     case MemberRemoved(m)             ⇒ removeMember(m)
     case s: CurrentClusterState       ⇒ reset(s)
+    case MemberExited(m)              ⇒ memberExited(m)
     case _: MemberEvent               ⇒ // not interested in other types of MemberEvent
     case HeartbeatRequest(from)       ⇒ addHeartbeatRequest(from)
     case SendHeartbeatRequest(to)     ⇒ sendHeartbeatRequest(to)
@@ -138,7 +139,17 @@ private[cluster] final class ClusterHeartbeatSender extends Actor with ActorLogg
 
   def addMember(m: Member): Unit = if (m.address != selfAddress) state = state addMember m.address
 
-  def removeMember(m: Member): Unit = if (m.address != selfAddress) state = state removeMember m.address
+  def removeMember(m: Member): Unit = {
+    if (m.uniqueAddress == cluster.selfUniqueAddress)
+      context stop self
+    else
+      state removeMember m.address
+  }
+
+  def memberExited(m: Member): Unit = {
+    if (m.uniqueAddress == cluster.selfUniqueAddress)
+      context stop self
+  }
 
   def addHeartbeatRequest(address: Address): Unit =
     if (address != selfAddress) state = state.addHeartbeatRequest(address, Deadline.now + HeartbeatRequestTimeToLive)

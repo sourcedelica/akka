@@ -32,8 +32,6 @@ class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializ
     InternalClusterAction.InitJoin.getClass -> (_ ⇒ InternalClusterAction.InitJoin),
     classOf[InternalClusterAction.InitJoinAck] -> (bytes ⇒ InternalClusterAction.InitJoinAck(addressFromBinary(bytes))),
     classOf[InternalClusterAction.InitJoinNack] -> (bytes ⇒ InternalClusterAction.InitJoinNack(addressFromBinary(bytes))),
-    classOf[ClusterLeaderAction.Exit] -> (bytes ⇒ ClusterLeaderAction.Exit(uniqueAddressFromBinary(bytes))),
-    classOf[ClusterLeaderAction.Shutdown] -> (bytes ⇒ ClusterLeaderAction.Shutdown(uniqueAddressFromBinary(bytes))),
     classOf[ClusterHeartbeatReceiver.Heartbeat] -> (bytes ⇒ ClusterHeartbeatReceiver.Heartbeat(addressFromBinary(bytes))),
     classOf[ClusterHeartbeatReceiver.EndHeartbeat] -> (bytes ⇒ ClusterHeartbeatReceiver.EndHeartbeat(addressFromBinary(bytes))),
     classOf[ClusterHeartbeatSender.HeartbeatRequest] -> (bytes ⇒ ClusterHeartbeatSender.HeartbeatRequest(addressFromBinary(bytes))),
@@ -68,10 +66,6 @@ class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializ
       addressToProto(address)
     case InternalClusterAction.InitJoinNack(address) ⇒
       addressToProto(address)
-    case ClusterLeaderAction.Exit(node) ⇒
-      uniqueAddressToProto(node)
-    case ClusterLeaderAction.Shutdown(node) ⇒
-      uniqueAddressToProto(node)
     case ClusterHeartbeatReceiver.EndHeartbeat(from) ⇒
       addressToProto(from)
     case ClusterHeartbeatSender.HeartbeatRequest(from) ⇒
