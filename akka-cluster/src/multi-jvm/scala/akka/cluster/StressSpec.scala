@@ -1300,6 +1300,11 @@ abstract class StressSpec
       enterBarrier("after-" + step)
     }
 
+    "gossip when idle again" taggedAs LongRunningTest in {
+      idleGossip("idle gossip again")
+      enterBarrier("after-" + step)
+    }
+
     "log jvm info" taggedAs LongRunningTest in {
       if (infolog) {
         log.info("StressSpec JVM:\n{}", jvmInfo)

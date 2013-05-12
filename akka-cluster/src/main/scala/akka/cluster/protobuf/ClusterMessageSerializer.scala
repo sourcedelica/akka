@@ -13,8 +13,19 @@ import java.io.{ ByteArrayInputStream, ObjectOutputStream, ByteArrayOutputStream
 import com.google.protobuf.ByteString
 import akka.util.ClassLoaderObjectInputStream
 import java.{ lang ⇒ jl }
+import java.util.zip.GZIPOutputStream
+import java.util.zip.GZIPInputStream
+import java.util.zip.Deflater
+import java.util.zip.DeflaterOutputStream
+import com.google.protobuf.MessageLite
+import java.util.zip.DeflaterInputStream
+import java.util.concurrent.atomic.AtomicInteger
+import scala.annotation.tailrec
 
 class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializer {
+
+  // FIXME remove
+  val tmpPrintlnCounter = new AtomicInteger
 
   private val fromBinaryMap = collection.immutable.HashMap[Class[_ <: ClusterMessage], Array[Byte] ⇒ AnyRef](
     classOf[InternalClusterAction.Join] -> {
@@ -23,7 +34,10 @@ class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializ
         InternalClusterAction.Join(uniqueAddressFromProto(m.node), m.roles.toSet)
     },
     classOf[InternalClusterAction.Welcome] -> {
-      case bytes ⇒
+      case inBytes ⇒
+        val bytes = decompress(inBytes)
+        // FIXME remove
+        if (tmpPrintlnCounter.incrementAndGet % 100 == 0) println(s"# Welcome: [${inBytes.length}] vs [${bytes.length}]")
         val m = msg.Welcome.defaultInstance.mergeFrom(bytes)
         InternalClusterAction.Welcome(uniqueAddressFromProto(m.from), gossipFromProto(m.gossip))
     },
@@ -45,40 +59,67 @@ class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializ
 
   def identifier = 5
 
-  def toBinary(obj: AnyRef): Array[Byte] = (obj match {
-    case ClusterHeartbeatReceiver.Heartbeat(from) ⇒
-      addressToProto(from)
-    case m: GossipEnvelope ⇒
-      gossipEnvelopeToProto(m)
-    case m: GossipStatus ⇒
-      gossipStatusToProto(m)
-    case m: MetricsGossipEnvelope ⇒
-      metricsGossipEnvelopeToProto(m)
-    case InternalClusterAction.Join(node, roles) ⇒
-      msg.Join(uniqueAddressToProto(node), roles.map(identity)(breakOut): Vector[String])
-    case InternalClusterAction.Welcome(from, gossip) ⇒
-      msg.Welcome(uniqueAddressToProto(from), gossipToProto(gossip))
-    case ClusterUserAction.Leave(address) ⇒
-      addressToProto(address)
-    case ClusterUserAction.Down(address) ⇒
-      addressToProto(address)
-    case InternalClusterAction.InitJoin ⇒
-      msg.Empty()
-    case InternalClusterAction.InitJoinAck(address) ⇒
-      addressToProto(address)
-    case InternalClusterAction.InitJoinNack(address) ⇒
-      addressToProto(address)
-    case ClusterLeaderAction.Exit(node) ⇒
-      uniqueAddressToProto(node)
-    case ClusterLeaderAction.Shutdown(node) ⇒
-      uniqueAddressToProto(node)
-    case ClusterHeartbeatReceiver.EndHeartbeat(from) ⇒
-      addressToProto(from)
-    case ClusterHeartbeatSender.HeartbeatRequest(from) ⇒
-      addressToProto(from)
-    case _ ⇒
-      throw new IllegalArgumentException(s"Can't serialize object of type ${obj.getClass}")
-  }).toByteArray
+  def toBinary(obj: AnyRef): Array[Byte] =
+    obj match {
+      case ClusterHeartbeatReceiver.Heartbeat(from) ⇒
+        addressToProto(from).toByteArray
+      case m: GossipEnvelope ⇒
+        compress(gossipEnvelopeToProto(m))
+      case m: GossipStatus ⇒
+        gossipStatusToProto(m).toByteArray
+      case m: MetricsGossipEnvelope ⇒
+        compress(metricsGossipEnvelopeToProto(m))
+      case InternalClusterAction.Join(node, roles) ⇒
+        msg.Join(uniqueAddressToProto(node), roles.map(identity)(breakOut): Vector[String]).toByteArray
+      case InternalClusterAction.Welcome(from, gossip) ⇒
+        compress(msg.Welcome(uniqueAddressToProto(from), gossipToProto(gossip)))
+      case ClusterUserAction.Leave(address) ⇒
+        addressToProto(address).toByteArray
+      case ClusterUserAction.Down(address) ⇒
+        addressToProto(address).toByteArray
+      case InternalClusterAction.InitJoin ⇒
+        msg.Empty().toByteArray
+      case InternalClusterAction.InitJoinAck(address) ⇒
+        addressToProto(address).toByteArray
+      case InternalClusterAction.InitJoinNack(address) ⇒
+        addressToProto(address).toByteArray
+      case ClusterLeaderAction.Exit(node) ⇒
+        uniqueAddressToProto(node).toByteArray
+      case ClusterLeaderAction.Shutdown(node) ⇒
+        uniqueAddressToProto(node).toByteArray
+      case ClusterHeartbeatReceiver.EndHeartbeat(from) ⇒
+        addressToProto(from).toByteArray
+      case ClusterHeartbeatSender.HeartbeatRequest(from) ⇒
+        addressToProto(from).toByteArray
+      case _ ⇒
+        throw new IllegalArgumentException(s"Can't serialize object of type ${obj.getClass}")
+    }
+
+  def compress(msg: MessageLite): Array[Byte] = {
+    val bos = new ByteArrayOutputStream(1024 * 4)
+    val zip = new GZIPOutputStream(bos)
+    msg.writeTo(zip)
+    //    zip.write(msg.toByteArray)
+    zip.close()
+    bos.toByteArray
+  }
+
+  def decompress(bytes: Array[Byte]): Array[Byte] = {
+    val in = new GZIPInputStream(new ByteArrayInputStream(bytes))
+    val out = new ByteArrayOutputStream()
+    val buffer = new Array[Byte](1024 * 4)
+
+    @tailrec def readChunk(): Unit = {
+      val n = in.read(buffer)
+      if (-1 != n) {
+        out.write(buffer, 0, n)
+        readChunk()
+      }
+    }
+    readChunk()
+
+    out.toByteArray
+  }
 
   def fromBinary(bytes: Array[Byte],
                  clazz: Option[Class[_]]): AnyRef = {
@@ -181,7 +222,10 @@ class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializ
     msg.GossipStatus(uniqueAddressToProto(status.from), allHashes, vectorClockToProto(status.version, hashMapping))
   }
 
-  private def gossipEnvelopeFromBinary(bytes: Array[Byte]): GossipEnvelope = {
+  private def gossipEnvelopeFromBinary(inBytes: Array[Byte]): GossipEnvelope = {
+    val bytes = decompress(inBytes)
+    // FIXME remove
+    if (tmpPrintlnCounter.incrementAndGet % 100 == 0) println(s"# GossipEnvelope: [${inBytes.length}] vs [${bytes.length}]")
     gossipEnvelopeFromProto(msg.GossipEnvelope.defaultInstance.mergeFrom(bytes))
   }
 
@@ -275,7 +319,10 @@ class ClusterMessageSerializer(val system: ExtendedActorSystem) extends Serializ
       msg.MetricsGossip(allAddresses.map(addressToProto), allMetricNames, nodeMetrics), envelope.reply)
   }
 
-  private def metricsGossipEnvelopeFromBinary(bytes: Array[Byte]): MetricsGossipEnvelope = {
+  private def metricsGossipEnvelopeFromBinary(inBytes: Array[Byte]): MetricsGossipEnvelope = {
+    val bytes = decompress(inBytes)
+    // FIXME remove
+    if (tmpPrintlnCounter.incrementAndGet % 100 == 0) println(s"# MetricsGossipEnvelope: [${inBytes.length}] vs [${bytes.length}]")
     metricsGossipEnvelopeFromProto(msg.MetricsGossipEnvelope.defaultInstance.mergeFrom(bytes))
   }
 

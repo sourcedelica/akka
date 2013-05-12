@@ -642,6 +642,10 @@ private[cluster] final class ClusterCoreDaemon(publisher: ActorRef) extends Acto
           remoteGossip, localGossip, winningGossip)
       }
 
+      // FIXME remove
+      log.info("# VClock size: [{}], seen.size: [{}], seen distinct vclocks: [{}]",
+        latestGossip.version.versions.size, latestGossip.overview.seen.size, latestGossip.overview.seen.values.toSet.size)
+
       stats = stats.incrementReceivedGossipCount
       publish(latestGossip)
 
